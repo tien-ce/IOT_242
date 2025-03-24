@@ -1,0 +1,9 @@
+1. Task manager based on RTOS
+    - This library help you manage simple task and create parallel task with RTOS.
+2. Feature
+    - Create and manage task simply with macro.
+    - Ready to support task sush as : Blinky LED , Read DHT Sensor, Uart data transmit.
+3. Setting
+    - Download library to the folder 'lib'with platform io and libararies with Arduino IDE from url : "https://github.com/tien-ce/RTOS_TASK"
+    - Make sure you have installed libraries dependencies.
+    - Read example to know how use function.

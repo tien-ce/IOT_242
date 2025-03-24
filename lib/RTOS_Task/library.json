@@ -1,0 +1,23 @@
+{
+  "name": "RTOS_TASK_LIBRARY",
+  "version": "1.0.0",
+  "description": "Library manage task based on RTOS",
+  "key words": ["RTOS", "TAKS", "FREE_RTOS"],
+  "repository": {
+    "type": "GIT",
+    "url": "https://github.com/tien-ce/RTOS_TASK"
+  },
+  "athour": [
+    {
+      "name": "Nguyen Van Tien",
+      "email": "tien11102004@gmail.com"
+    }
+  ],
+  "license": "HCMUT",
+  "frameworks": "Arduino",
+  "platforms": ["Platformio , Arduino IDE"],
+  "dependencies": {
+    "adafruit/DHT sensor library": "^1.4.4",
+    "bblanchon/ArduinoJson": "@6.18.5"
+  }
+}
