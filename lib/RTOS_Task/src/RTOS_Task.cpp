@@ -1,8 +1,9 @@
 #include "RTOS_Task.h"
-/*------------------------Function Support-------------------------------------*/
-void SubcribeFirmwareUdpate()
-{
-}
+/*------------------------Begin-------------------------------------*/
+#ifdef TASK_LCD
+LiquidCrystal_I2C lcd(0x21,16,2);
+
+#endif
 /*------------------------------------------------------------------------*/
 /*------------------------Declaration-------------------------------------*/
 constexpr uint32_t MAX_MESSAGE_SIZE = 4096U;     // Kích thước tối đa của thông điệp gửi qua MQTT (4096 bytes)
@@ -33,7 +34,7 @@ void CallBack::Add_RPC(const char *rpc_name, std::function<RPC_Response(const RP
     RPC_LIST.push_back(RPC_Callback(rpc_name, rpc_response));
 }
 // Khởi tạo CallBack cho các thuộc tính chia sẻ
-void CallBack::Shared_Attribute_Begin(std::function<void(const Shared_Attribute_Data &)> Shared_callback)
+void CallBack::Shared_Attribute_Begin(std::function<bool(const Shared_Attribute_Data &)> Shared_callback)
 {
     this->Shared_callback = Shared_callback;
 }
@@ -55,19 +56,11 @@ void SubscribeRPC(CallBack &callback)
     }
     Serial.println("Subcribe to RPC");
     #endif
-    const Shared_Attribute_Callback atrributes_callback(callback.Shared_callback, callback.SHARED_ATTRIBUTES_LIST.cbegin(), callback.SHARED_ATTRIBUTES_LIST.cend());
-    const Attribute_Request_Callback attribute_shared_request_callback(callback.Shared_callback, callback.SHARED_ATTRIBUTES_LIST.cbegin(), callback.SHARED_ATTRIBUTES_LIST.cend());
     #ifdef USE_SHARED_ATTRIBUTE
-    if (!tb.Shared_Attributes_Subscribe(atrributes_callback))
-    { // Đăng ký cập nhật thuộc tính chia sẻ
-        Serial.println("Failed to subcribe for shared attribute updates");
-        return;
+    for(const char* key:callback.SHARED_ATTRIBUTES_LIST){
+        tb.AddUserAttribute(key);
     }
-    if (!tb.Shared_Attributes_Request(attribute_shared_request_callback))
-    { // Yêu cầu Thingboard gửi lại các thuộc tính hiện tại
-        Serial.println("Failed to request for shared attribute");
-        return;
-    }
+    tb.AddAttributeCallBack(callback.Shared_callback);
     Serial.println("Subcribe to Attribute");
     #endif
 }
@@ -102,7 +95,7 @@ void ManagerTask::printTaskList()
         Serial.println(it.nameTask);
     }
 }
-void ManagerTask::addTask(void (*func)(void *), const char *nameTask, uint32_t Stack, uint8_t Pin, uint32_t Delay, void *other = NULL)
+void ManagerTask::addTask(void (*func)(void *), const char *nameTask, uint32_t Stack, uint8_t Pin, uint32_t Delay, void *other )
 {
     Parameter pm(Pin, Delay, other);
     Task temp(func, nameTask, Stack, pm);
@@ -141,7 +134,7 @@ void TaskBlinky(void *pvParameters)
 }
 #endif
 
-#ifdef TASK_LIGHT
+#ifdef fIGHT
 void TaskLight(void *pvParameters)
 {
     Parameter pm = *((Parameter *)pvParameters);
@@ -215,16 +208,7 @@ void TaskDht(void *pvParameters)
             re_val->temperature = dht20.getTemperature();
             re_val->humidity = dht20.getHumidity();
             Serial.println(re_val->temperature);
-            if (isnan(dht20.getTemperature()) || isnan(re_val->humidity))
-            {
-                Serial.println("Failed to read from DHT20 sensor!");
-                re_val->temperature = -1;
-                re_val->humidity = -1;
-            }
-            else
-            {
-                Serial.println(dht20.getTemperature());
-            }
+            Serial.println(dht20.getTemperature());
             delay(Delay);
         }
         break;
@@ -232,6 +216,19 @@ void TaskDht(void *pvParameters)
 
     default:
         break;
+    }
+}
+#endif
+#ifdef TASK_LCD
+void TaskLCD(void* pvParameters){
+    lcd.begin();
+    lcd.clear();
+    Parameter pm = *((Parameter *)pvParameters);
+    uint8_t Pin = pm.get_Pin();
+    uint32_t Delay = pm.get_Delay();
+    LCD_VAL lcd_val = *(LCD_VAL*) pm.other;
+    for(;;){
+        delay(Delay);
     }
 }
 #endif

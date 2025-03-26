@@ -12,8 +12,10 @@
 #include <ArduinoOTA.h>
 #include <RTOS_Task.h>
 #include <OTA_Update.h>
+#include "LiquidCrystal_I2C.h"
 /*--------------------Define--------------------------------------*/
 #define Dht20 0
+extern LiquidCrystal_I2C lcd;
 /*------------------------Macro-----------------------------------*/
 #define setVal(name_val) \
     this->name_val = name_val
@@ -25,6 +27,7 @@ struct LIGHT_VAL
 {
     int light;
 };
+
 struct SOIL_VAL
 {
     int soil;
@@ -40,6 +43,9 @@ struct DHT_VAL
         this->temperature = 0;
         this->humidity = 0;
     }
+};
+struct LCD_VAL{
+    DHT_VAL* dht;
 };
 struct ThingsBoard_VAL
 {
@@ -105,7 +111,7 @@ class CallBack
 private:
     std::vector<const char *> SHARED_ATTRIBUTES_LIST; // Danh sách thuộc tính chia sẻ
     std::vector<RPC_Callback> RPC_LIST;               // Danh sách RPC
-    std::function<void(const Shared_Attribute_Data &)> Shared_callback;
+    std::function<bool(const Shared_Attribute_Data &)> Shared_callback;
     // Đăng kí RPC
     friend void SubscribeRPC(CallBack &callback);
 
@@ -116,7 +122,7 @@ public:
     // Thêm một thuộc tính chia sẻ
     void Add_Shared_Attribute(const char *shared_attribute);
     // Khởi tạo hàm CallBack cho các thuộc tính chia sẻ
-    void Shared_Attribute_Begin(std::function<void(const Shared_Attribute_Data &)> Shared_callback);
+    void Shared_Attribute_Begin(std::function<bool(const Shared_Attribute_Data &)> Shared_callback);
     // Thêm một RPC mới
     void Add_RPC(const char *rpc_name, std::function<RPC_Response(const RPC_Data &)> rpc_response);
     // In danh sách thuộc tính và RPC đã đăng ký
@@ -147,7 +153,7 @@ private:
     std::vector<Task> TaskList;
 
 public:
-    void addTask(void (*func)(void *), const char *nameTask, uint32_t Delay, uint8_t Pin, uint32_t Stack, void *other);
+    void addTask(void (*func)(void *), const char *nameTask, uint32_t Stack, uint8_t Pin, uint32_t Delay, void *other = NULL);
     void printTaskList();
     void beginTask();
 };
@@ -174,7 +180,9 @@ void TaskTransmitUart(void *pvParameters);
 #ifdef TASK_RECEIVE_UART
 void TaskReceiveUart(void *pvParameters);
 #endif
-
+#ifdef TASK_LCD
+void TaskLCD(void* pvParametes);
+#endif
 void TaskPublishDataToThingsboard(void *pvParameters);
 /*-------------------------------------Extern------------------------------------*/
 extern ThingsBoard tb;

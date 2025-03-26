@@ -24,6 +24,7 @@
 /// Constant strings in flash memory.
 /// ---------------------------------
 // Publish data topics.
+
 #if THINGSBOARD_ENABLE_PROGMEM
 constexpr char ATTRIBUTE_TOPIC[] PROGMEM = "v1/devices/me/attributes";
 constexpr char TELEMETRY_TOPIC[] PROGMEM = "v1/devices/me/telemetry";
@@ -263,6 +264,10 @@ constexpr char CHECKSUM_AGORITM_SHA512[] = "SHA512";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
 // Log messages.
+/*********************************** USER DEFINE************************************************* */
+constexpr char KEY_USER[] = "KEY ATTRIBUTE FOR USER";
+/****************************************************************************************** */
+
 #if THINGSBOARD_ENABLE_PROGMEM
 constexpr char NO_FW[] PROGMEM = "No new firmware assigned on the given device";
 constexpr char EMPTY_FW[] PROGMEM = "Given firmware was NULL";
@@ -315,6 +320,15 @@ template<size_t MaxFieldsAmt = Default_Fields_Amt,
 #endif // THINGSBOARD_ENABLE_DYNAMIC
 class ThingsBoardSized {
   public:
+  /***************************************** USER DEFINE *************************************************** */
+  void AddUserAttribute(const char* key){
+    this->m_user_attribute.push_back(key);
+  }
+  void AddAttributeCallBack(std::function<bool(const Shared_Attribute_Data& )> callback){
+    this->m_userCallback = callback;
+  }
+  /********************************************************************************************************** */ 
+
     /// @brief Constructs a ThingsBoardSized instance with the given network client that should be used to establish the connection to ThingsBoard
     /// @param client MQTT Client implementation that should be used to establish the connection to ThingsBoard
     /// @param bufferSize Maximum amount of data that can be either received or sent to ThingsBoard at once, if bigger packets are received they are discarded
@@ -909,7 +923,7 @@ class ThingsBoardSized {
     // Firmware OTA API
 
 #if THINGSBOARD_ENABLE_OTA
-
+    /*********************************************************************/
     /// @brief Immediately starts a firmware update if firmware is assigned to the given device.
     /// See https://thingsboard.io/docs/user-guide/ota-updates/ for more information
     /// @param callback Callback method that will be called
@@ -921,11 +935,14 @@ class ThingsBoardSized {
       }
 
       // Request the firmware information
-      const std::vector<const char *> fw_shared_keys{FW_CHKS_KEY, FW_CHKS_ALGO_KEY, FW_SIZE_KEY, FW_TITLE_KEY, FW_VER_KEY};
+      std::vector<const char *> fw_shared_keys{FW_CHKS_KEY, FW_CHKS_ALGO_KEY, FW_SIZE_KEY, FW_TITLE_KEY, FW_VER_KEY};
+      for(const char* key:this->m_user_attribute){
+        fw_shared_keys.push_back(key);
+      }
       const Attribute_Request_Callback fw_request_callback(std::bind(&ThingsBoardSized::Firmware_Shared_Attribute_Received, this, std::placeholders::_1), fw_shared_keys.cbegin(), fw_shared_keys.cend());
       return Shared_Attributes_Request(fw_request_callback);
     }
-
+    /**********************************************************************/
     /// @brief Stops the currently running firmware update, calls the finish callback with a failure if the update is running.
     /// See https://thingsboard.io/docs/user-guide/ota-updates/ for more information
     inline void Stop_Firmware_Update() {
@@ -944,7 +961,10 @@ class ThingsBoardSized {
       }
 
       // Subscribes to changes of the firmware information
-      const std::vector<const char *> fw_shared_keys{FW_CHKS_KEY, FW_CHKS_ALGO_KEY, FW_SIZE_KEY, FW_TITLE_KEY, FW_VER_KEY};
+      std::vector<const char *> fw_shared_keys{FW_CHKS_KEY, FW_CHKS_ALGO_KEY, FW_SIZE_KEY, FW_TITLE_KEY, FW_VER_KEY};
+      for(const char* key:this->m_user_attribute){
+        fw_shared_keys.push_back(key);
+      }
       const Shared_Attribute_Callback fw_update_callback(std::bind(&ThingsBoardSized::Firmware_Shared_Attribute_Received, this, std::placeholders::_1), fw_shared_keys.cbegin(), fw_shared_keys.cend());
       return Shared_Attributes_Subscribe(fw_update_callback);
     }
@@ -1318,8 +1338,13 @@ class ThingsBoardSized {
     inline void Firmware_Shared_Attribute_Received(const Shared_Attribute_Data& data) {
       // Check if firmware is available for our device
       if (!data.containsKey(FW_VER_KEY) || !data.containsKey(FW_TITLE_KEY)) {
-        Logger::log(NO_FW);
-        Firmware_Send_State(FW_STATE_FAILED, NO_FW);
+        if(!this->m_userCallback(data)){
+          Logger::log(NO_FW);
+          Firmware_Send_State(FW_STATE_FAILED, NO_FW);
+        }
+        else{
+          Logger::log(KEY_USER);
+        }
         return;
       }
       else if (m_fw_callback == nullptr) {
@@ -2026,7 +2051,10 @@ class ThingsBoardSized {
     }
 
 #endif // !THINGSBOARD_ENABLE_STL
-
+/************************** USER DEFINE ******************************/
+std::vector<const char* > m_user_attribute;
+std::function<bool(const Shared_Attribute_Data& )> m_userCallback;
+/***********************************************************************/
 };
 
 #if !THINGSBOARD_ENABLE_STL && !THINGSBOARD_ENABLE_DYNAMIC
