@@ -955,6 +955,8 @@ class ThingsBoardSized {
     /// @param callback Callback method that will be called
     /// @return Whether subscribing the given callback was successful or not
     inline bool Subscribe_Firmware_Update(const OTA_Update_Callback& callback) {
+      Logger::log("subcribe with title:");
+      Logger::log(callback.Get_Firmware_Title());
       if (!Prepare_Firmware_Settings(callback))  {
         Logger::log(RESETTING_FAILED);
         return false;
@@ -964,6 +966,9 @@ class ThingsBoardSized {
       std::vector<const char *> fw_shared_keys{FW_CHKS_KEY, FW_CHKS_ALGO_KEY, FW_SIZE_KEY, FW_TITLE_KEY, FW_VER_KEY};
       for(const char* key:this->m_user_attribute){
         fw_shared_keys.push_back(key);
+      }
+      for(const char* key:fw_shared_keys){
+        Logger::log(key);
       }
       const Shared_Attribute_Callback fw_update_callback(std::bind(&ThingsBoardSized::Firmware_Shared_Attribute_Received, this, std::placeholders::_1), fw_shared_keys.cbegin(), fw_shared_keys.cend());
       return Shared_Attributes_Subscribe(fw_update_callback);
@@ -1290,6 +1295,8 @@ class ThingsBoardSized {
     /// @return Whether checking and sending the current device firmware information was successful or not
     inline bool Prepare_Firmware_Settings(const OTA_Update_Callback& callback) {
       const char *currFwTitle = callback.Get_Firmware_Title();
+      Logger::log("Prepare_firmware_Setting");
+      Logger::log(currFwTitle);
       const char *currFwVersion = callback.Get_Firmware_Version();
 
       // Send current firmware version
@@ -1302,6 +1309,8 @@ class ThingsBoardSized {
 
       // Set private members needed for update
       m_fw_callback = &callback;
+      Logger::log("Prepare_firmware_Setting, m_fw_callback");
+      Logger::log(m_fw_callback->Get_Firmware_Title());
       return true;
     }
 
@@ -1375,6 +1384,8 @@ class ThingsBoardSized {
       }
       // If firmware title is not the same, we do not initiate an update, because we expect the binary to be for another device type 
       else if (strncmp_P(curr_fw_title, fw_title, JSON_STRING_SIZE(strlen(curr_fw_title))) != 0) {
+        Logger::log(curr_fw_title);
+        Logger::log(fw_title);
         Logger::log(FW_NOT_FOR_US);
         Firmware_Send_State(FW_STATE_FAILED, FW_NOT_FOR_US);
         return;

@@ -13,8 +13,16 @@
 #include <RTOS_Task.h>
 #include <OTA_Update.h>
 #include "LiquidCrystal_I2C.h"
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "OTA_Update_Callback.h"
+#include "OTA_Handler.h"
+#include <Espressif_Updater.h>
 /*--------------------Define--------------------------------------*/
 #define Dht20 0
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
 extern LiquidCrystal_I2C lcd;
 /*------------------------Macro-----------------------------------*/
 #define setVal(name_val) \
@@ -46,6 +54,12 @@ struct DHT_VAL
 };
 struct LCD_VAL{
     DHT_VAL* dht;
+    size_t* currentChunk;
+    size_t* totalChuncks;
+};
+struct OLED_VAL{
+    DHT_VAL* dht;
+    SOIL_VAL* soil_val;
 };
 struct ThingsBoard_VAL
 {
@@ -116,9 +130,11 @@ private:
     friend void SubscribeRPC(CallBack &callback);
 
 public:
+    std::function<void(const size_t &, const size_t & )> progess_ota_callback;
+    std::function<void(const bool&)> updated_ota_callback;
     // Constructor
     CallBack(std::vector<const char *> shared_attributes = {}, std::vector<RPC_Callback> rpc_list = {});
-
+    void subcribe_OTA_Update(std::function<void(const size_t &, const size_t & )> progress_ota_callback,std::function<void(const bool&)> updated_ota_callback);
     // Thêm một thuộc tính chia sẻ
     void Add_Shared_Attribute(const char *shared_attribute);
     // Khởi tạo hàm CallBack cho các thuộc tính chia sẻ
@@ -182,6 +198,9 @@ void TaskReceiveUart(void *pvParameters);
 #endif
 #ifdef TASK_LCD
 void TaskLCD(void* pvParametes);
+#endif
+#ifdef TASK_OLED
+void TaskOled(void *pvParameters);
 #endif
 void TaskPublishDataToThingsboard(void *pvParameters);
 /*-------------------------------------Extern------------------------------------*/

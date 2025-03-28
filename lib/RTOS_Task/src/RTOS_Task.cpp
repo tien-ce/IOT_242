@@ -1,7 +1,20 @@
 #include "RTOS_Task.h"
+/*-----------------------OTA----------------------------------------------------------------*/
+constexpr const char CURRENT_FIRMWARE_TITLE[] = "YOLO_UNO"; // Title của firmware
+constexpr const char CURRENT_FIRMWARE_VERSION[] = "1.2";  // Version của firmware
+constexpr uint8_t FIRMWARE_FAILURE_RETRIES = 12U;         // Số lần thử lại tải firmware
+constexpr uint16_t FIRMWARE_PACKET_SIZE = 32768U;            // Kích thước mỗi gói dữ liệu
+
+Espressif_Updater updater;
+bool currentFWSent = false;
+bool updateRequestSent = false;
 /*------------------------Begin-------------------------------------*/
 #ifdef TASK_LCD
 LiquidCrystal_I2C lcd(0x21,16,2);
+
+#endif
+#ifdef TASK_OLED
+Adafruit_SSD1306 display(SCREEN_WIDTH,SCREEN_HEIGHT,&Wire,OLED_RESET);
 
 #endif
 /*------------------------------------------------------------------------*/
@@ -21,7 +34,11 @@ CallBack callback;
 // Constructor
 CallBack::CallBack(std::vector<const char *> shared_attributes, std::vector<RPC_Callback> rpc_list)
     : SHARED_ATTRIBUTES_LIST(shared_attributes), RPC_LIST(rpc_list) {}
-
+// OTA
+void CallBack::subcribe_OTA_Update(std::function<void(const size_t &, const size_t & )> progress_ota_callback,std::function<void(const bool&)> updated_ota_callback){
+    this->progess_ota_callback = progress_ota_callback;
+    this->updated_ota_callback = updated_ota_callback;
+}
 // Thêm thuộc tính chia sẻ
 void CallBack::Add_Shared_Attribute(const char *shared_attribute)
 {
@@ -54,6 +71,11 @@ void SubscribeRPC(CallBack &callback)
         Serial.println("Failed to subscribe for RPC");
         return;
     }
+    const Attribute_Request_Callback  attributes_callback(callback.Shared_callback, callback.SHARED_ATTRIBUTES_LIST.cbegin(), callback.SHARED_ATTRIBUTES_LIST.cend());
+    if(!tb.Shared_Attributes_Request(attributes_callback)){
+        Serial.println("failed to request attribute");
+        return;
+    }
     Serial.println("Subcribe to RPC");
     #endif
     #ifdef USE_SHARED_ATTRIBUTE
@@ -62,6 +84,17 @@ void SubscribeRPC(CallBack &callback)
     }
     tb.AddAttributeCallBack(callback.Shared_callback);
     Serial.println("Subcribe to Attribute");
+    if (!currentFWSent)
+    {
+      Serial.println("FW Sent");
+      currentFWSent = tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && tb.Firmware_Send_State(FW_STATE_UPDATED);
+    }
+    if (!updateRequestSent)
+    {
+      Serial.println("Firwmare Update Subscription...");
+      static OTA_Update_Callback ota_callback(callback.progess_ota_callback, callback.updated_ota_callback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &updater, FIRMWARE_FAILURE_RETRIES, FIRMWARE_PACKET_SIZE);
+      updateRequestSent = tb.Subscribe_Firmware_Update(ota_callback);
+    }
     #endif
 }
 // In danh sách thuộc tính và RPC
@@ -207,8 +240,6 @@ void TaskDht(void *pvParameters)
             dht20.read();
             re_val->temperature = dht20.getTemperature();
             re_val->humidity = dht20.getHumidity();
-            Serial.println(re_val->temperature);
-            Serial.println(dht20.getTemperature());
             delay(Delay);
         }
         break;
@@ -228,6 +259,43 @@ void TaskLCD(void* pvParameters){
     uint32_t Delay = pm.get_Delay();
     LCD_VAL lcd_val = *(LCD_VAL*) pm.other;
     for(;;){
+        // lcd.clear();
+        lcd.setCursor(0,0);
+        lcd.print("---OTA UPDATE---");
+        lcd.setCursor(0,1);
+        lcd.printf("Progress %.2f%%",static_cast<float>((*lcd_val.currentChunk) * 100U) / *(lcd_val.totalChuncks));
+        delay(Delay);
+    }
+}
+#endif
+#ifdef TASK_OLED
+void TaskOled(void *pvParameters){
+    Parameter pm = *((Parameter *)pvParameters);
+    uint8_t Pin = pm.get_Pin();
+    uint32_t Delay = pm.get_Delay();
+    OLED_VAL oled_val = *(OLED_VAL*) pm.other;
+    display.begin(SSD1306_SWITCHCAPVCC,0x3C);
+    display.display();
+    delay(1000);
+    // Xóa bộ đệm
+    display.clearDisplay();
+    display.display();
+      // Thiết lập font chữ và màu sắc
+    display.setTextSize(2);
+    display.setTextColor(WHITE);
+    for(;;){
+        display.clearDisplay();
+        display.setCursor(0,0);
+        char temp_str[20];
+        char hum_str[20];
+        sprintf(temp_str,"Temp:%.1fC",oled_val.dht->temperature);
+        display.print(temp_str);
+        display.setCursor(0,16);
+        sprintf(hum_str,"Humi:%.1f%%",oled_val.dht->humidity);
+        display.print(hum_str);
+        display.setCursor(0,32);
+        display.printf("Soil: %d%%",oled_val.soil_val->soil);
+        display.display();
         delay(Delay);
     }
 }
@@ -293,28 +361,19 @@ void TaskPublishDataToThingsboard(void *pvParameters)
     for (;;)
     {
         delay(1000);
-        if (WiFi.status() != WL_CONNECTED)
-        {
-            WiFi.begin(thingsboard.WIFI_SSID, thingsboard.WIFI_PASSWORD); // Kết nối esp32 vào WIFI
-            while (WiFi.status() != WL_CONNECTED)
-            {
-                delay(500);
-                Serial.print(".");
-            }
-            Serial.println("Connected to AP");
-        }
         if (!tb.connected())
         {
             Serial.print("Connecting to: ");
             Serial.print(thingsboard.THINGSBOARD_SERVER);
             Serial.print(" with token ");
             Serial.println(thingsboard.TOKEN);
+            Serial.println("Subscribing for RPC...");
             if (!tb.connect(thingsboard.THINGSBOARD_SERVER, thingsboard.TOKEN, thingsboard.THINGSBOARD_PORT))
             {
                 Serial.println("Connected to ThingsBoard");
-                return;
+                continue;
             }
-            Serial.println("Subscribing for RPC...");
+
             SubscribeRPC(callback);
         }
         if (millis() - previousDataSend > telemetrySendInterval)

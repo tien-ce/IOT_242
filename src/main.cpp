@@ -1,17 +1,15 @@
 #include "RTOS_Task.h"
 #ifdef THINGSBOARD
 #include "Wire.h"
-#include "OTA_Update_Callback.h"
-#include "OTA_Handler.h"
-#include <Espressif_Updater.h>
-#define LED_PIN 48
+
+#define LED_PIN 18
 #define VALUE_LED_PIN 47
 #define SDA_PIN GPIO_NUM_11
 #define SCL_PIN GPIO_NUM_12
 #define PWM_RESOLUTION 8 // Độ phân giải (8-bit: giá trị từ 0-255)
 #define DHT_Pin 10
 #define PUMP_PIN 21 //D10
-
+#define BLINKY 1
 // Nếu muốn sử dụng các task định nghĩa sẵn , vui lòng define tương ứng ở config.h,
 // Nếu muốn tự tạo task, có thể thêm struct cho các hàm tùy chỉnh, delay và port nếu không sử dụng có thể gán tùy ý
 
@@ -43,7 +41,7 @@ constexpr char LED_MODE_ATTR[] = "ledMode";                   // Thuộc tính �
 constexpr char LED_STATE_ATTR[] = "ledState";                 // Thuộc tính hiển thị trạng thái hiện tại của LED (bật/tắt)
 
 volatile bool attributesChanged = false; // Biến đánh dấu nếu thuộc tính bị thay đổi từ ThingsBoard
-volatile int ledMode = 0;                // Chế độ LED: 0 (OFF), 1 (Blink), 2 (ON)
+volatile int ledMode = 1;                // Chế độ LED: 0 (ON/OFF), 1 (Blink).
 volatile bool ledState = false;          // Trạng thái hiện tại của LED (true: bật, false: tắt)
 
 constexpr uint16_t BLINKING_INTERVAL_MS_MIN = 10U;    // Khoảng thời gian nhấp nháy LED tối thiểu (10ms)
@@ -61,31 +59,29 @@ constexpr std::array<const char *, 2U> SHARED_ATTRIBUTES_LIST = {
 /*------------------------Declaration-------------------------------------*/
 // DHT_VAL re_val = {DHT11}; // For Non-Basic Task
 DHT_VAL re_val = {Dht20};// For Non-Basic Task
-LCD_VAL lcd_val = {&re_val};
-// Uart_VAL uart_val = {&re_val,NULL};
+
+// Global biến nằm trong RAM an toàn
+__attribute__((section(".iram0.bss"))) size_t currentChunk;
+__attribute__((section(".iram0.bss"))) size_t totalChunk;
+
 LIGHT_VAL light_val;
 SOIL_VAL soil_val;
-ThingsBoard_VAL things_val = {&re_val, &light_val, &soil_val, WIFI_SSID, WIFI_PASSWORD, THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT};
-/*----------------------------------------------------------------*/
-/*-----------------------OTA----------------------------------------------------------------*/
-constexpr const char CURRENT_FIRMWARE_TITLE[] = "YOLO_UNO"; // Title của firmware
-constexpr const char CURRENT_FIRMWARE_VERSION[] = "1.0";  // Version của firmware
-constexpr uint8_t FIRMWARE_FAILURE_RETRIES = 12U;         // Số lần thử lại tải firmware
-constexpr uint16_t FIRMWARE_PACKET_SIZE = 32768U;            // Kích thước mỗi gói dữ liệu
+OLED_VAL oled_val = {&re_val,&soil_val};
+LCD_VAL lcd_val = {&re_val,&currentChunk,&totalChunk};
+// Uart_VAL uart_val = {&re_val,NULL};
 
-Espressif_Updater updater;
-bool currentFWSent = false;
-bool updateRequestSent = false;
+ThingsBoard_VAL things_val = {&re_val, &light_val, &soil_val, WIFI_SSID, WIFI_PASSWORD, THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT};
+/*********************************** Các biến cho RPC **************/
+bool ledOn = false;
+uint32_t led_toggle_time = 0;
+/*----------------------------------------------------------------*/
+
+/***************************** OTA **************************************************** */
 void updatedCallback(const bool &success)
 {
   if (success)
   {
     Serial.println("Done, Reboot now");
-    lcd.clear();
-    lcd.setCursor(0,0);
-    lcd.print("-UPDATE SUCCESS-");
-    lcd.setCursor(0,1);
-    lcd.print("Done, Reboot now");
     esp_restart();
     return;
   }
@@ -94,14 +90,8 @@ void updatedCallback(const bool &success)
 
 void progressCallback(const size_t &currentChunk, const size_t &totalChuncks)
 {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("---OTA UPDATE---");
-  lcd.setCursor(0, 1);
-  char progres_str[50];
-  sprintf(progres_str,"Progress %.2f%%",static_cast<float>(currentChunk * 100U) / totalChuncks);
-  lcd.print(progres_str);
-  Serial.printf("Progress %.2f%%\n", static_cast<float>(currentChunk * 100U) / totalChuncks);
+  *(lcd_val.currentChunk) = currentChunk;
+  *(lcd_val.totalChuncks) = totalChuncks;
 }
 /*--------------------------------------------------------------------------------*/
 RPC_Response getLedState(const RPC_Data &data)
@@ -114,10 +104,13 @@ RPC_Response getLedState(const RPC_Data &data)
 RPC_Response setLedSwitchState(const RPC_Data &data)
 {                                          // Hàm xử lý lệnh RPC từ ThingsBoard (Bật/Tắt LED từ xa)
   Serial.println("Received Switch state"); // Hiển thị thông tin nhận được lệnh điều khiển
-  bool newState = data;                    // Đọc trạng thái mới từ dữ liệu nhận được (true: bật, false: tắt)
+  bool newState = data["status"];                    // Đọc trạng thái mới từ dữ liệu nhận được (true: bật, false: tắt)
+  uint16_t duration = data["duration"];
   Serial.print("Switch state change: ");
   Serial.println(newState);
   digitalWrite(LED_PIN, newState);              // Thay đổi trạng thái của LED
+  ledOn = true;
+  led_toggle_time = millis() + duration;
   attributesChanged = true;                     // Đánh dấu đã có thay đổi để cập nhật lại ThingsBoard
   return RPC_Response("setStateLED", newState); // Trả về kết quả để cập nhật trạng thái trên Dashboard
 }
@@ -130,7 +123,6 @@ RPC_Response setValueLed(const RPC_Data &data)
   int pwmValue = map(value, 0, 100, 0, 225);
   pinMode(VALUE_LED_PIN, OUTPUT);
   analogWrite(VALUE_LED_PIN, pwmValue); // Thay đổi trạng thái của LED
-
   attributesChanged = true;                  // Đánh dấu đã có thay đổi để cập nhật lại ThingsBoard
   return RPC_Response("setValueLed", value); // Trả về kết quả để cập nhật trạng thái trên Dashboard
 }
@@ -155,9 +147,20 @@ bool processSharedAttributes(const Shared_Attribute_Data &data)
     else if (strcmp(it->key().c_str(), LED_STATE_ATTR) == 0)
     {                                    // Kiểm tra nếu thuộc tính là "ledState"
       ledState = it->value().as<bool>(); // Đọc trạng thái mới của LED (bật/tắt)
-      digitalWrite(LED_PIN, ledState);   // Thay đổi trạng thái LED theo lệnh từ ThingsBoard
       Serial.print("LED state is set to: ");
       Serial.println(ledState); // In trạng thái LED để kiểm tra
+      is_user_key = true;
+    }
+    else if(strcmp(it->key().c_str(), LED_MODE_ATTR) == 0){
+      // Nếu thuộc tính là LED Mode
+      ledMode = it->value().as<int>();
+      Serial.print("Led mode is set to ");
+      if(ledMode == 0){
+        Serial.println("ON / OFF");
+      }
+      else if (ledMode == 1){
+        Serial.println("Blinky");
+      }
       is_user_key = true;
     }
     else if (strcmp(it->key().c_str(), PUMP_ATTR) == 0)
@@ -170,13 +173,12 @@ bool processSharedAttributes(const Shared_Attribute_Data &data)
     }
     // Nếu có thay đổi về title hoặc version 
   }
+  attributesChanged = true; // Đánh dấu rằng thuộc tính đã được thay đổi
   if(!is_user_key){
     return false;
   }
-  attributesChanged = true; // Đánh dấu rằng thuộc tính đã được thay đổi
   return true;
 }
-
 
 void setup()
 {
@@ -187,8 +189,10 @@ void setup()
   callback.Add_RPC("setStateLED", setLedSwitchState);
   callback.Add_Shared_Attribute(BLINKING_INTERVAL_ATTR);
   callback.Add_Shared_Attribute(LED_STATE_ATTR);
+  callback.Add_Shared_Attribute(LED_MODE_ATTR);
   callback.Shared_Attribute_Begin(processSharedAttributes);
   callback.Print_List();
+  callback.subcribe_OTA_Update(&progressCallback,&updatedCallback);
   // delay(1000);  // Chờ 1 giây trước khi thực hiện các tác vụ tiếp theo
 
   #ifdef TASK_BLINKY
@@ -200,10 +204,13 @@ void setup()
     task.addTask(TaskDht, "dht", 2048, DHT_Pin, 1000, &re_val);
   #endif
   #ifdef TASK_LCD
-  task.addTask(TaskLCD,"LCD",2048,225,1000,&lcd_val);
+  task.addTask(TaskLCD,"LCD",2048,225,500,&lcd_val);
   #endif
   #ifdef TASK_SOIL
-    task.addTask(TaskSoil, "Soil", 2048, 1, 1000, &soid_val);
+    task.addTask(Tasksoil, "Soil", 2048, 1, 1000, &soil_val);
+  #endif
+  #ifdef TASK_OLED
+    task.addTask(TaskOled,"OLED",2048,225,1000,&oled_val);
   #endif
   task.addTask(TaskPublishDataToThingsboard, "Thingsboard", 16384, 225, 1000, &things_val);
   task.beginTask();
@@ -211,16 +218,31 @@ void setup()
 
 void loop()
 {
-  if (!currentFWSent)
-  {
-    currentFWSent = tb.Firmware_Send_Info(CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION) && tb.Firmware_Send_State(FW_STATE_UPDATED);
+  if (attributesChanged) {
+    attributesChanged = false;
+    switch(ledMode){
+      case 0:
+        digitalWrite(LED_PIN,ledState);
+      case 1:
+        ledOn = ledState == true ? 1 : 0;
+        digitalWrite(LED_PIN,ledState);
+        led_toggle_time = millis() + blinkingInterval;
+    }
+    tb.sendAttributeData(LED_STATE_ATTR, digitalRead(LED_PIN));
   }
-  if (!updateRequestSent)
-  {
-    Serial.println("Firwmare Update Subscription...");
-    const OTA_Update_Callback callback(&progressCallback, &updatedCallback, CURRENT_FIRMWARE_TITLE, CURRENT_FIRMWARE_VERSION, &updater, FIRMWARE_FAILURE_RETRIES, FIRMWARE_PACKET_SIZE);
-    updateRequestSent = tb.Subscribe_Firmware_Update(callback);
+  if(ledMode == BLINKY){
+    if(millis() > led_toggle_time){
+      led_toggle_time = millis() + blinkingInterval;
+      if(ledOn){
+        digitalWrite(LED_PIN,LOW);
+        ledOn = false;
+      }
+      else{
+        digitalWrite(LED_PIN,HIGH);
+        ledOn = true;        
+      }
+    } 
   }
-  delay(1000);
+  delay(10);
 }
 #endif
