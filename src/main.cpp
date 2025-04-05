@@ -183,6 +183,7 @@ bool processSharedAttributes(const Shared_Attribute_Data &data)
 void setup()
 {
   Serial.begin(SERIAL_DEBUG_BAUD); // Khởi động giao tiếp Serial với tốc độ 115200 để debug
+  Wire.begin(11, 12);  // Khởi tạo giao tiếp I2C 
   //   Serial.println("Image displayed!");
   pinMode(LED_PIN, OUTPUT);
   callback.Add_RPC("setValueLED", setValueLed);
@@ -200,7 +201,6 @@ void setup()
   #endif
 
   #ifdef TASK_DHT
-    Wire.begin(11, 12);  // Khởi tạo giao tiếp I2C với cảm biến DHT20
     task.addTask(TaskDht, "dht", 2048, DHT_Pin, 1000, &re_val);
   #endif
   #ifdef TASK_LCD
